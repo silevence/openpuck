@@ -201,6 +201,31 @@ extern uint8_t g_padStick[2];
 #define GYRO_GRIP_RIGHT 4 // live while the right grip is touched
 #define GYRO_GATE_MAX 4
 extern uint8_t g_gyroGateCfg[ET_COUNT];
+
+// Gyro dampening (like Steam Input's "gyro dampening buttons"): while any selected button group is pressed,
+// and for a short hold after release, gyro rates are scaled down so pulling a trigger or pressing a button
+// doesn't jolt the aim. Global (every mode that builds from g_in: emulated types, SInput/DInput, Lizard);
+// Steam mode forwards the raw report, so there Steam's own dampening setting applies.
+#define GYRO_DAMP_TRIGGERS \
+	0x01u // either analog trigger pulled past GYRO_DAMP_TRIG_MIN
+#define GYRO_DAMP_BUMPERS 0x02u // LB / RB
+#define GYRO_DAMP_FACE 0x04u // A / B / X / Y
+#define GYRO_DAMP_BACK 0x08u // L4 / L5 / R4 / R5
+#define GYRO_DAMP_STICKS 0x10u // L3 / R3 (stick clicks)
+#define GYRO_DAMP_DPAD 0x20u // d-pad
+#define GYRO_DAMP_PADS 0x40u // trackpad clicks
+#define GYRO_DAMP_ALL 0x7Fu // every valid group bit
+#define GYRO_DAMP_TRIG_MIN \
+	20 // analog trigger (0..255) counted as "pulled" above this (~8%)
+#define GYRO_DAMP_PCT_DEFAULT \
+	25 // gyro strength while dampened, percent (0 = freeze)
+#define GYRO_DAMP_HOLD_DEFAULT \
+	10 // keep dampening 10 x 10 ms = 100 ms after release
+#define GYRO_DAMP_HOLD_MAX 50 // 500 ms
+extern uint8_t
+	g_gyroDampBtns; // GYRO_DAMP_* group bits; 0 = dampening off (default)
+extern uint8_t g_gyroDampPct; // 0..100
+extern uint8_t g_gyroDampHold; // 0..GYRO_DAMP_HOLD_MAX, in 10 ms steps
 // Live mirror of g_gyroGateCfg[g_etype] (GYRO_ALWAYS in puck modes).
 extern uint8_t g_gyroGate;
 

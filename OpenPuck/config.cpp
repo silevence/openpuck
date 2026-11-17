@@ -49,6 +49,11 @@ uint8_t g_padStick[2] = { PS_OFF, PS_OFF };
 uint8_t g_gyroGateCfg[ET_COUNT] = {};
 uint8_t g_gyroGate = GYRO_ALWAYS;
 
+// Gyro dampening: off by default (no button groups selected).
+uint8_t g_gyroDampBtns = 0;
+uint8_t g_gyroDampPct = GYRO_DAMP_PCT_DEFAULT;
+uint8_t g_gyroDampHold = GYRO_DAMP_HOLD_DEFAULT;
+
 // Live mirrors of the active type (puck modes use the harmless defaults below).
 uint8_t g_abSwap = 0;
 uint8_t g_back[4] = { 5, 6, 7, 8 };
@@ -120,6 +125,8 @@ struct Cfg {
 	uint8_t ext[CFG_EXT_STORAGE_BYTES];
 	// per-type grip-sense gyro activation (GYRO_*); 0xFF (a cfg.bin predating this tail field) -> GYRO_ALWAYS
 	uint8_t gyroGate[ET_COUNT];
+	// gyro dampening (g_gyroDamp*); 0xFF (a cfg.bin predating these tail fields) -> compiled defaults
+	uint8_t gyroDampBtns, gyroDampPct, gyroDampHold;
 }; // rsvd0 = ex-padSmooth, now the one-shot debug-CDC arm
 
 // Shortest cfg.bin we still accept: the layout as of CFG_MAGIC 0xCF, i.e. everything before the appended tail.
@@ -171,6 +178,9 @@ void saveCfg()
 		c.padStick[i][1] = g_padStickCfg[i][1];
 		c.gyroGate[i] = g_gyroGateCfg[i];
 	}
+	c.gyroDampBtns = g_gyroDampBtns;
+	c.gyroDampPct = g_gyroDampPct;
+	c.gyroDampHold = g_gyroDampHold;
 	InternalFS.remove(CFG_FILE);
 	File f(InternalFS);
 	if (f.open(CFG_FILE, FILE_O_WRITE)) {
@@ -249,6 +259,13 @@ void loadCfg()
 			for (int i = 0; i < ET_COUNT; i++)
 				if (c.gyroGate[i] <= GYRO_GATE_MAX)
 					g_gyroGateCfg[i] = c.gyroGate[i];
+			// Gyro dampening: 0xFF (older file) or out-of-range values keep the compiled defaults.
+			if ((c.gyroDampBtns & ~GYRO_DAMP_ALL) == 0)
+				g_gyroDampBtns = c.gyroDampBtns;
+			if (c.gyroDampPct <= 100)
+				g_gyroDampPct = c.gyroDampPct;
+			if (c.gyroDampHold <= GYRO_DAMP_HOLD_MAX)
+				g_gyroDampHold = c.gyroDampHold;
 			// Missing extension bytes alone do not force a config rewrite.
 			if (got < (int)offsetof(struct Cfg, ext))
 				consume = true;

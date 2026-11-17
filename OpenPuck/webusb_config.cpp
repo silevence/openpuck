@@ -106,7 +106,8 @@ static bool boardCommand(uint8_t op)
 //                 (field 39, RUMBLE_STYLE_* in haptics.h)]
 //                [v22: p[196] RF recovery status/journal transport capability marker (0x52)]
 //                [v23: p[197..200] per-type grip-sense gyro activation (fields 88..91, GYRO_* in config.h)]
-#define WB_PAYLEN 199
+//                [v24: p[201..203] gyro dampening: button groups / strength % / hold x10 ms (fields 92..94)]
+#define WB_PAYLEN 202
 // The blob send is drop-on-full (never blocks loop), so the vendor TX FIFO MUST be able to hold a whole blob
 // -- otherwise tud_vendor_write_available() never reaches the frame size and EVERY frame is dropped (blank
 // panel / stale mappings). The Makefile sets -DCFG_TUD_VENDOR_TX_BUFSIZE=256; guard it here so a build without
@@ -134,6 +135,7 @@ static void webusbSendBlob()
 	// clang-format off
 	// protocol version
 	// (23 = +per-type grip-sense gyro activation (fields 88..91, blob p[197..200]));
+	// (24 = +gyro dampening (fields 92..94, blob p[201..203]));
 	// (21 = +rumble style (field 39, blob p[195]) and the REVIVED rumble-strength field 22 at blob p[53], 
 	// now carrying percent/2; 
 	// 22 = +RF recovery capability marker at blob p[196];
@@ -156,7 +158,7 @@ static void webusbSendBlob()
 	// 7 = +raw accel; 
 	// 6 = +swPro120/gyroScale)
 	// clang-format on
-	p[2] = 23;
+	p[2] = 24;
 	p[3] = g_usbMode;
 	p[4] = (uint8_t)g_mDiv;
 	p[5] = (uint8_t)g_mFric;
@@ -345,6 +347,10 @@ static void webusbSendBlob()
 	// v23: per-type grip-sense gyro activation (GYRO_* -- see config.h)
 	for (int et = 0; et < ET_COUNT; et++)
 		p[197 + et] = g_gyroGateCfg[et];
+	// v24: gyro dampening (GYRO_DAMP_* -- see config.h)
+	p[201] = g_gyroDampBtns;
+	p[202] = g_gyroDampPct;
+	p[203] = g_gyroDampHold;
 	// CRITICAL: usb_web.write() SPINS (`while (remain && _connected) yield();`) until the IN FIFO drains or the
 	// panel disconnects. If the panel holds the WebUSB interface open but stops reading its IN endpoint -- a
 	// backgrounded tab, or the host briefly not servicing transferIn under load -- the FIFO never empties and
@@ -1267,6 +1273,21 @@ void webusbPoll()
 					}
 					break;
 				}
+
+				// 92..94: gyro dampening -- button groups (GYRO_DAMP_*), strength %
+				// while dampened, release hold in 10 ms steps. Protocol v24.
+				case 92:
+					g_gyroDampBtns = v & GYRO_DAMP_ALL;
+					break;
+				case 93:
+					g_gyroDampPct = v > 100 ? 100 : v;
+					break;
+				case 94:
+					g_gyroDampHold =
+						v > GYRO_DAMP_HOLD_MAX ?
+							GYRO_DAMP_HOLD_MAX :
+							v;
+					break;
 
 				// Host-rumble strength, as PERCENT/2 so the full range fits the
 				// one value byte. Revived in protocol v21; clamped to

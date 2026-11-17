@@ -17,6 +17,33 @@
 
 // true if gyro should reach the host for this raw TB_* button word under the active grip-sense setting
 // (g_gyroGate, config.h GYRO_*). TB_LGRIP/TB_RGRIP are the capacitive grip-touch bits (triton.h).
+// Gyro dampening: true if any button group selected in g_gyroDampBtns is pressed on this input.
+static bool gyroDampPressed(const PuckInput &in)
+{
+	const uint32_t b = in.buttons;
+	const uint8_t g = g_gyroDampBtns;
+	if ((g & GYRO_DAMP_TRIGGERS) &&
+	    (in.lt > GYRO_DAMP_TRIG_MIN || in.rt > GYRO_DAMP_TRIG_MIN ||
+	     (b & (TB_L2 | TB_R2))))
+		return true;
+	if ((g & GYRO_DAMP_BUMPERS) && (b & (TB_LB | TB_RB)))
+		return true;
+	if ((g & GYRO_DAMP_FACE) && (b & (TB_A | TB_B | TB_X | TB_Y)))
+		return true;
+	if ((g & GYRO_DAMP_BACK) && (b & (TB_L4 | TB_L5 | TB_R4 | TB_R5)))
+		return true;
+	if ((g & GYRO_DAMP_STICKS) && (b & (TB_L3 | TB_R3)))
+		return true;
+	if ((g & GYRO_DAMP_DPAD) && (b & (TB_DUP | TB_DDN | TB_DLF | TB_DRT)))
+		return true;
+	if ((g & GYRO_DAMP_PADS) && (b & (TB_LPADC | TB_RPADC)))
+		return true;
+	return false;
+}
+// Per-slot time of the last dampening press (millis) and whether one has happened, for the release hold.
+static uint32_t g_gyroDampLastMs[NSLOT];
+static bool g_gyroDampSeen[NSLOT];
+
 static inline bool gyroGateOpen(uint32_t b)
 {
 	bool l = (b & TB_LGRIP) != 0, r = (b & TB_RGRIP) != 0;
@@ -3771,6 +3798,48 @@ uint8_t rfConnTx(uint8_t ch, uint8_t s1, const uint8_t *payload, uint8_t plen,
 							g_in[g_curSlot].gx = 0;
 							g_in[g_curSlot].gy = 0;
 							g_in[g_curSlot].gz = 0;
+						}
+						// Gyro dampening: scale the rates while a selected button is down and for g_gyroDampHold x10 ms
+						// after it's released (a trigger's release kicks the aim too). Same every-frame rule as above.
+						if (g_gyroDampBtns) {
+							PuckInput &in =
+								g_in[g_curSlot];
+							const uint32_t nowMs =
+								millis();
+							bool damp = false;
+							if (gyroDampPressed(
+								    in)) {
+								g_gyroDampLastMs
+									[g_curSlot] =
+										nowMs;
+								g_gyroDampSeen
+									[g_curSlot] =
+										true;
+								damp = true;
+							} else if (
+								g_gyroDampSeen
+									[g_curSlot] &&
+								(uint32_t)(nowMs -
+									   g_gyroDampLastMs
+										   [g_curSlot]) <
+									(uint32_t)g_gyroDampHold *
+										10u) {
+								damp = true;
+							}
+							if (damp) {
+								in.gx = (int16_t)((int32_t)in
+											  .gx *
+										  g_gyroDampPct /
+										  100);
+								in.gy = (int16_t)((int32_t)in
+											  .gy *
+										  g_gyroDampPct /
+										  100);
+								in.gz = (int16_t)((int32_t)in
+											  .gz *
+										  g_gyroDampPct /
+										  100);
+							}
 						}
 						// Mode-switch chord (all 4 back + face/dpad): don't leak the press to the host. g_in[g_curSlot].buttons stays
 						// intact so the chord detector still fires; per-mode builders mask the same bits while back-4 held.
