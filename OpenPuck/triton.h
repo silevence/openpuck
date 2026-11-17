@@ -42,6 +42,10 @@
 // paddle / QAM remap to LT/RT). psShouldersByte / the Switch builders already read these as L2/R2 / ZL/ZR.
 #define TB_R2 0x800000u
 #define TB_L2 0x8000000u
+// Capacitive grip-sense bits (PROTOCOL.md section 8). Set whenever a hand rests on that grip, so they are a
+// held-state, not a click. Used by the grip-sense gyro activation setting (config.h GYRO_*).
+#define TB_RGRIP 0x10000000u // right grip touch
+#define TB_LGRIP 0x20000000u // left grip touch
 
 // Virtual PS targets, settable ONLY via a back-paddle/QAM remap (psOrBackCode / tritonFromCode), never by the
 // controller itself. They live on bits 30/31 -- the only bits the SC2 0x45 report does NOT use (see PROTOCOL.md

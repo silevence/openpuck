@@ -105,7 +105,8 @@ static bool boardCommand(uint8_t op)
 //                [v21: p[53] rumble strength as PERCENT/2 (field 22, revived); p[195] rumble style
 //                 (field 39, RUMBLE_STYLE_* in haptics.h)]
 //                [v22: p[196] RF recovery status/journal transport capability marker (0x52)]
-#define WB_PAYLEN 195
+//                [v23: p[197..200] per-type grip-sense gyro activation (fields 88..91, GYRO_* in config.h)]
+#define WB_PAYLEN 199
 // The blob send is drop-on-full (never blocks loop), so the vendor TX FIFO MUST be able to hold a whole blob
 // -- otherwise tud_vendor_write_available() never reaches the frame size and EVERY frame is dropped (blank
 // panel / stale mappings). The Makefile sets -DCFG_TUD_VENDOR_TX_BUFSIZE=256; guard it here so a build without
@@ -132,6 +133,7 @@ static void webusbSendBlob()
 
 	// clang-format off
 	// protocol version
+	// (23 = +per-type grip-sense gyro activation (fields 88..91, blob p[197..200]));
 	// (21 = +rumble style (field 39, blob p[195]) and the REVIVED rumble-strength field 22 at blob p[53], 
 	// now carrying percent/2; 
 	// 22 = +RF recovery capability marker at blob p[196];
@@ -154,7 +156,7 @@ static void webusbSendBlob()
 	// 7 = +raw accel; 
 	// 6 = +swPro120/gyroScale)
 	// clang-format on
-	p[2] = 22;
+	p[2] = 23;
 	p[3] = g_usbMode;
 	p[4] = (uint8_t)g_mDiv;
 	p[5] = (uint8_t)g_mFric;
@@ -340,6 +342,9 @@ static void webusbSendBlob()
 	// v22: append-only RF recovery transport capability. p[181] remains the
 	// upstream Steam Machine toggle; older RF builds used that byte for 0x52.
 	p[196] = 0x52;
+	// v23: per-type grip-sense gyro activation (GYRO_* -- see config.h)
+	for (int et = 0; et < ET_COUNT; et++)
+		p[197 + et] = g_gyroGateCfg[et];
 	// CRITICAL: usb_web.write() SPINS (`while (remain && _connected) yield();`) until the IN FIFO drains or the
 	// panel disconnects. If the panel holds the WebUSB interface open but stops reading its IN endpoint -- a
 	// backgrounded tab, or the host briefly not servicing transferIn under load -- the FIFO never empties and
@@ -1241,6 +1246,22 @@ void webusbPoll()
 						pad = (uint8_t)((f - 80) % 2);
 					if (et < ET_COUNT && v <= PS_MAX) {
 						g_padStickCfg[et][pad] = v;
+						if (et == g_etype)
+							applyActiveType();
+					}
+					break;
+				}
+
+				// 88..91: per-type grip-sense gyro activation, field = 88 + et,
+				// value GYRO_* (config.h). Protocol v23.
+				case 88:
+				case 89:
+				case 90:
+				case 91: {
+					uint8_t et = (uint8_t)(f - 88);
+					if (et < ET_COUNT &&
+					    v <= GYRO_GATE_MAX) {
+						g_gyroGateCfg[et] = v;
 						if (et == g_etype)
 							applyActiveType();
 					}

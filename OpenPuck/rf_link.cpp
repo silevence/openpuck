@@ -15,6 +15,25 @@
 #include <Arduino.h>
 #include <string.h>
 
+// true if gyro should reach the host for this raw TB_* button word under the active grip-sense setting
+// (g_gyroGate, config.h GYRO_*). TB_LGRIP/TB_RGRIP are the capacitive grip-touch bits (triton.h).
+static inline bool gyroGateOpen(uint32_t b)
+{
+	bool l = (b & TB_LGRIP) != 0, r = (b & TB_RGRIP) != 0;
+	switch (g_gyroGate) {
+	case GYRO_GRIP_EITHER:
+		return l || r;
+	case GYRO_GRIP_BOTH:
+		return l && r;
+	case GYRO_GRIP_LEFT:
+		return l;
+	case GYRO_GRIP_RIGHT:
+		return r;
+	default:
+		return true;
+	}
+}
+
 bool g_rfHost = true;
 bool g_connOn = true;
 uint8_t g_connType = 0xE7; // start with protocol-version handshake, then 0xE3
@@ -3740,6 +3759,18 @@ uint8_t rfConnTx(uint8_t ch, uint8_t s1, const uint8_t *payload, uint8_t plen,
 									 .gy,
 								&g_in[g_curSlot]
 									 .gz);
+						}
+						// Grip-sense gyro activation (emulated types only -- Steam/Lizard/SInput/DInput are ET_NONE and
+						// keep their raw gyro). Runs on EVERY frame, not only full 46-byte ones, so a short frame that
+						// holds the last IMU can't leave a stale non-zero rate live after the grip is released. Only
+						// the gyro RATES are zeroed; the accelerometer still passes so the host keeps its gravity vector.
+						if (g_etype != ET_NONE &&
+						    !gyroGateOpen(
+							    g_in[g_curSlot]
+								    .buttons)) {
+							g_in[g_curSlot].gx = 0;
+							g_in[g_curSlot].gy = 0;
+							g_in[g_curSlot].gz = 0;
 						}
 						// Mode-switch chord (all 4 back + face/dpad): don't leak the press to the host. g_in[g_curSlot].buttons stays
 						// intact so the chord detector still fires; per-mode builders mask the same bits while back-4 held.

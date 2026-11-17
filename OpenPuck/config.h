@@ -190,6 +190,20 @@ extern uint8_t g_ledBright;
 // Live mirror of g_padStickCfg[g_etype]: {left pad, right pad} -> stick (PS_*).
 extern uint8_t g_padStick[2];
 
+// Grip-sense gyro activation, per emulated type. While the chosen grip condition is NOT met the gyro rates
+// sent to the host are zero (the accelerometer still passes through, so "down" stays known). Kept OUTSIDE
+// TypeCfg (like g_padStickCfg) so the on-flash Cfg layout only grows in its tail.
+// GYRO_ALWAYS is the default: gyro always live (the behaviour before this setting existed).
+#define GYRO_ALWAYS 0
+#define GYRO_GRIP_EITHER 1 // live while either grip is touched
+#define GYRO_GRIP_BOTH 2 // live while both grips are touched
+#define GYRO_GRIP_LEFT 3 // live while the left grip is touched
+#define GYRO_GRIP_RIGHT 4 // live while the right grip is touched
+#define GYRO_GATE_MAX 4
+extern uint8_t g_gyroGateCfg[ET_COUNT];
+// Live mirror of g_gyroGateCfg[g_etype] (GYRO_ALWAYS in puck modes).
+extern uint8_t g_gyroGate;
+
 // Copy g_type[g_etype] into the live mirrors above (safe defaults when g_etype == ET_NONE).
 void applyActiveType();
 // Switch Pro motion setting. Persisted in its OWN flash file (mode_switch_pro.cpp), NOT in Cfg -- so changing

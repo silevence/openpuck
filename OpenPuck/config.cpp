@@ -45,6 +45,10 @@ uint8_t g_etype = ET_NONE;
 uint8_t g_padStickCfg[ET_COUNT][2] = {};
 uint8_t g_padStick[2] = { PS_OFF, PS_OFF };
 
+// Grip-sense gyro activation, GYRO_ALWAYS (gyro always live) for every type by default.
+uint8_t g_gyroGateCfg[ET_COUNT] = {};
+uint8_t g_gyroGate = GYRO_ALWAYS;
+
 // Live mirrors of the active type (puck modes use the harmless defaults below).
 uint8_t g_abSwap = 0;
 uint8_t g_back[4] = { 5, 6, 7, 8 };
@@ -68,6 +72,7 @@ void applyActiveType()
 		g_rumble = 1;
 		g_ledBright = 0;
 		g_padStick[0] = g_padStick[1] = PS_OFF;
+		g_gyroGate = GYRO_ALWAYS;
 		return;
 	}
 	const TypeCfg &t = g_type[g_etype];
@@ -80,6 +85,7 @@ void applyActiveType()
 	g_ledBright = t.ledBright;
 	g_padStick[0] = g_padStickCfg[g_etype][0];
 	g_padStick[1] = g_padStickCfg[g_etype][1];
+	g_gyroGate = g_gyroGateCfg[g_etype];
 }
 // poll rate defaults to POLL_US_DEFAULT (250 Hz), matching the real Valve puck (see config.h). The
 // delivered report rate equals the poll rate (fresh IMU in every reply). Live-adjustable via console
@@ -112,6 +118,8 @@ struct Cfg {
 	// pre-tail file) -> compiled default (on)
 	uint8_t suspendOff;
 	uint8_t ext[CFG_EXT_STORAGE_BYTES];
+	// per-type grip-sense gyro activation (GYRO_*); 0xFF (a cfg.bin predating this tail field) -> GYRO_ALWAYS
+	uint8_t gyroGate[ET_COUNT];
 }; // rsvd0 = ex-padSmooth, now the one-shot debug-CDC arm
 
 // Shortest cfg.bin we still accept: the layout as of CFG_MAGIC 0xCF, i.e. everything before the appended tail.
@@ -161,6 +169,7 @@ void saveCfg()
 		c.type[i] = g_type[i];
 		c.padStick[i][0] = g_padStickCfg[i][0];
 		c.padStick[i][1] = g_padStickCfg[i][1];
+		c.gyroGate[i] = g_gyroGateCfg[i];
 	}
 	InternalFS.remove(CFG_FILE);
 	File f(InternalFS);
@@ -235,6 +244,11 @@ void loadCfg()
 					if (c.padStick[i][k] <= PS_MAX)
 						g_padStickCfg[i][k] =
 							c.padStick[i][k];
+			// Grip-sense gyro activation: 0xFF (a file predating this tail field) or an out-of-range
+			// value keeps the compiled default (GYRO_ALWAYS).
+			for (int i = 0; i < ET_COUNT; i++)
+				if (c.gyroGate[i] <= GYRO_GATE_MAX)
+					g_gyroGateCfg[i] = c.gyroGate[i];
 			// Missing extension bytes alone do not force a config rewrite.
 			if (got < (int)offsetof(struct Cfg, ext))
 				consume = true;
