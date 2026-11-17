@@ -675,6 +675,10 @@ const typeEls = []; // one entry per TYPE_DEFS: {sec, tab, activeDot, back[], qa
 const PAD_STICK_FIELD0 = 80;
 const PAD_STICK_OPTS = [[0,"Off (touchpad)"],[1,"Left stick"],[2,"Right stick"]];
 const PAD_STICK_LABELS = ["Left trackpad \u2192 stick","Right trackpad \u2192 stick"];
+// Grip-sense gyro activation (firmware GYRO_*, protocol v23). Field id = GYRO_GATE_FIELD0 + et; read back from
+// firmware blob p[197+et] = JS p[195+et]. Gyro rates are sent as zero while the chosen grip isn't touched.
+const GYRO_GATE_FIELD0 = 88;
+const GYRO_GATE_OPTS = [[0,"Always on (default)"],[1,"While either grip is touched"],[2,"While both grips are touched"],[3,"While left grip is touched"],[4,"While right grip is touched"]];
 function mkSelect(def, includeNone){
   const sel=document.createElement("select");
   if(includeNone){ const o=document.createElement("option"); o.value=0; o.textContent="— none —"; sel.appendChild(o); }
@@ -749,6 +753,16 @@ function setTab(et){
       row.appendChild(sel); sec.appendChild(row);
       sel.addEventListener("change",()=>setField(PAD_STICK_FIELD0+et*2+pad, +sel.value));
       rec.padStick.push(sel);
+    }
+    // grip-sense gyro activation (not on Xbox: no gyro to gate)
+    if(et!==0){
+      const row=document.createElement("div"); row.className="row";
+      const lab=document.createElement("label"); lab.textContent="Gyro activation (grip sense)"; row.appendChild(lab);
+      const sel=document.createElement("select");
+      for(const [v,lbl] of GYRO_GATE_OPTS){ const o=document.createElement("option"); o.value=v; o.textContent=lbl; sel.appendChild(o); }
+      row.appendChild(sel); sec.appendChild(row);
+      sel.addEventListener("change",()=>setField(GYRO_GATE_FIELD0+et, +sel.value));
+      rec.gyroGate=sel;
     }
     host.appendChild(sec); typeEls.push(rec);
   });
@@ -1571,6 +1585,12 @@ function applyBlob(p){
         sel.parentNode.classList.toggle("hide", !padStickCap);
         if(padStickCap && document.activeElement!==sel) sel.value=p[185+et*2+pad];
       });
+      if(rec.gyroGate){
+        // hidden on firmware without the setting (protocol < 23), so the panel never shows a dead control
+        const gyroGateCap=(p[0]>=23 && p.length>195+et);
+        rec.gyroGate.parentNode.classList.toggle("hide", !gyroGateCap);
+        if(gyroGateCap && document.activeElement!==rec.gyroGate) rec.gyroGate.value=p[195+et];
+      }
       // dot marks the type matching the current puck mode
       rec.activeDot.style.display = (et===activeEt) ? "" : "none";
     });
