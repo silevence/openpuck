@@ -226,6 +226,28 @@ extern uint8_t
 	g_gyroDampBtns; // GYRO_DAMP_* group bits; 0 = dampening off (default)
 extern uint8_t g_gyroDampPct; // 0..100
 extern uint8_t g_gyroDampHold; // 0..GYRO_DAMP_HOLD_MAX, in 10 ms steps
+
+// Lizard gyro mouse, Steam Input-style output settings (mode_lizard.cpp gyroMouseRate()).
+#define LZG_STYLE_MASK \
+	0x03u // g_lzGyroFlags bits 0..1: how controller rotation becomes left/right
+#define LZG_STYLE_YAW \
+	0u // turn the controller flat like a steering wheel lying down (Steam "Yaw")
+#define LZG_STYLE_ROLL 1u // lean the controller left/right (Steam "Roll")
+#define LZG_STYLE_PLAYER \
+	2u // yaw around real-world vertical, ignores grip tilt (JoyShockMapper "player space")
+#define LZG_INVERT_X 0x04u
+#define LZG_INVERT_Y 0x08u
+#define LZG_FLAGS_ALL 0x0Fu
+extern uint8_t g_lzGyroFlags; // LZG_* (default: Yaw, no invert)
+extern uint8_t
+	g_lzGyroDots; // Dots Per 360 / 100, 4..200 (default 43 = 4300 px per full turn)
+extern uint8_t g_lzGyroSens; // sensitivity in tenths, 1..100 (default 10 = 1.0x)
+extern uint8_t
+	g_lzGyroMix; // vertical/horizontal mixer, 0..200, 100 = 0% (below reduces vertical)
+extern uint8_t
+	g_lzGyroDz; // speed deadzone, tenths of deg/s, 0..50 (default 15 = 1.5 deg/s)
+extern uint8_t
+	g_lzGyroPrec; // precision speed, tenths of deg/s, 0..100 (default 0 = off)
 // Live mirror of g_gyroGateCfg[g_etype] (GYRO_ALWAYS in puck modes).
 extern uint8_t g_gyroGate;
 

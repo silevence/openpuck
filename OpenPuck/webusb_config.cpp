@@ -107,7 +107,8 @@ static bool boardCommand(uint8_t op)
 //                [v22: p[196] RF recovery status/journal transport capability marker (0x52)]
 //                [v23: p[197..200] per-type grip-sense gyro activation (fields 88..91, GYRO_* in config.h)]
 //                [v24: p[201..203] gyro dampening: button groups / strength % / hold x10 ms (fields 92..94)]
-#define WB_PAYLEN 202
+//                [v25: p[204..209] lizard gyro mouse: flags/dots/sens/mix/deadzone/precision (fields 102..107)]
+#define WB_PAYLEN 208
 // The blob send is drop-on-full (never blocks loop), so the vendor TX FIFO MUST be able to hold a whole blob
 // -- otherwise tud_vendor_write_available() never reaches the frame size and EVERY frame is dropped (blank
 // panel / stale mappings). The Makefile sets -DCFG_TUD_VENDOR_TX_BUFSIZE=256; guard it here so a build without
@@ -136,6 +137,7 @@ static void webusbSendBlob()
 	// protocol version
 	// (23 = +per-type grip-sense gyro activation (fields 88..91, blob p[197..200]));
 	// (24 = +gyro dampening (fields 92..94, blob p[201..203]));
+	// (25 = +lizard gyro mouse output settings (fields 102..107, blob p[204..209]));
 	// (21 = +rumble style (field 39, blob p[195]) and the REVIVED rumble-strength field 22 at blob p[53], 
 	// now carrying percent/2; 
 	// 22 = +RF recovery capability marker at blob p[196];
@@ -158,7 +160,7 @@ static void webusbSendBlob()
 	// 7 = +raw accel; 
 	// 6 = +swPro120/gyroScale)
 	// clang-format on
-	p[2] = 24;
+	p[2] = 25;
 	p[3] = g_usbMode;
 	p[4] = (uint8_t)g_mDiv;
 	p[5] = (uint8_t)g_mFric;
@@ -351,6 +353,13 @@ static void webusbSendBlob()
 	p[201] = g_gyroDampBtns;
 	p[202] = g_gyroDampPct;
 	p[203] = g_gyroDampHold;
+	// v25: lizard gyro mouse output settings (LZG_* -- see config.h)
+	p[204] = g_lzGyroFlags;
+	p[205] = g_lzGyroDots;
+	p[206] = g_lzGyroSens;
+	p[207] = g_lzGyroMix;
+	p[208] = g_lzGyroDz;
+	p[209] = g_lzGyroPrec;
 	// CRITICAL: usb_web.write() SPINS (`while (remain && _connected) yield();`) until the IN FIFO drains or the
 	// panel disconnects. If the panel holds the WebUSB interface open but stops reading its IN endpoint -- a
 	// backgrounded tab, or the host briefly not servicing transferIn under load -- the FIFO never empties and
@@ -1287,6 +1296,31 @@ void webusbPoll()
 						v > GYRO_DAMP_HOLD_MAX ?
 							GYRO_DAMP_HOLD_MAX :
 							v;
+					break;
+
+				// 102..107: lizard gyro mouse (Steam-style). Protocol v25.
+				case 102:
+					if ((v & LZG_STYLE_MASK) <=
+					    LZG_STYLE_PLAYER)
+						g_lzGyroFlags = v &
+								LZG_FLAGS_ALL;
+					break;
+				case 103:
+					g_lzGyroDots =
+						v < 4 ? 4 : (v > 200 ? 200 : v);
+					break;
+				case 104:
+					g_lzGyroSens =
+						v < 1 ? 1 : (v > 100 ? 100 : v);
+					break;
+				case 105:
+					g_lzGyroMix = v > 200 ? 200 : v;
+					break;
+				case 106:
+					g_lzGyroDz = v > 50 ? 50 : v;
+					break;
+				case 107:
+					g_lzGyroPrec = v > 100 ? 100 : v;
 					break;
 
 				// Host-rumble strength, as PERCENT/2 so the full range fits the

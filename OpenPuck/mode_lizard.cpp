@@ -4,6 +4,7 @@
 #include "config.h"
 #include "usb_tx.h"
 #include <string.h>
+#include <math.h>
 
 // Evaluate the binding table for ONE controller's button word, merging its keyboard/mouse-button/
 // consumer outputs into the shared accumulators. Pulled out of rfLizard so every bonded controller can
@@ -136,19 +137,86 @@ static uint64_t lizardButtons(const PuckInput &in)
 // Stick deflection -> -1..1 with a deadzone and a squared response.
 #define STICK_MOUSE_DEADZONE 3500
 #define STICK_MOUSE_PX_PER_S 1100.0f
-// Gyro mouse. Raw gyro is +-2000 deg/s over int16 (mode_sinput.cpp SIN_GYRO_DPS_RANGE) = 16.4 counts per deg/s.
-// Axes follow the SC2 frame documented in mode_sinput.cpp: gz = yaw about the up axis, -gx = pitch.
-// Rates under the deadzone are dropped so sensor bias doesn't creep the cursor while the controller is still.
+// Gyro mouse (Steam-style settings: g_lzGyro* in config.h). Raw gyro is +-2000 deg/s over int16
+// (mode_sinput.cpp SIN_GYRO_DPS_RANGE) = 16.4 counts per deg/s. Axes follow the SC2 frame documented in
+// mode_sinput.cpp: gz = yaw about the controller's up axis, gx = pitch, gy = roll.
 #define GYRO_COUNTS_PER_DPS 16.4f
-#define GYRO_MOUSE_DEADZONE_DPS 1.5f
-#define GYRO_MOUSE_PX_PER_DEG \
-	12.0f // at the default g_mDiv (64); scales with the mouse sensitivity setting
-static float gyroDps(int16_t v)
+// Player space: turning is measured around the real-world vertical (the gravity direction from the
+// accelerometer) instead of the controller's own up axis, so a tilted grip doesn't slow horizontal aim.
+// 1.41 = JoyShockMapper's "yaw relax" factor, which lets a little controller-local yaw through.
+#define GYRO_PLAYER_YAW_RELAX 1.41f
+static float g_grav[NSLOT]
+		   [3]; // low-passed accelerometer per slot (gravity direction)
+static bool g_gravInit[NSLOT];
+
+// Convert one slot's gyro sample into a 2D turn rate in deg/s (x = right, y = down, screen convention)
+// using the selected conversion style, then apply invert, deadzone, precision speed and the mixer.
+static void gyroMouseRate(int s, const PuckInput &in, float &rx, float &ry)
 {
-	float d = (float)v / GYRO_COUNTS_PER_DPS;
-	if (d > -GYRO_MOUSE_DEADZONE_DPS && d < GYRO_MOUSE_DEADZONE_DPS)
-		return 0;
-	return d;
+	const float yaw = (float)in.gz / GYRO_COUNTS_PER_DPS;
+	const float pitch = (float)in.gx / GYRO_COUNTS_PER_DPS;
+	const float roll = (float)in.gy / GYRO_COUNTS_PER_DPS;
+	float x, y;
+	switch (g_lzGyroFlags & LZG_STYLE_MASK) {
+	case LZG_STYLE_ROLL:
+		x = -roll;
+		break;
+	case LZG_STYLE_PLAYER: {
+		float gx = g_grav[s][0], gy = g_grav[s][1], gz = g_grav[s][2];
+		float n = sqrtf(gx * gx + gy * gy + gz * gz);
+		if (n < 1.0f) { // no gravity estimate yet -> plain yaw
+			x = -yaw;
+			break;
+		}
+		gy /= n;
+		gz /= n;
+		// world yaw = the part of the controller's yaw+roll rotation that is about the gravity axis.
+		// Flip by the up-axis sign so a normally held controller (either accelerometer sign convention)
+		// gives the same direction as plain yaw.
+		float world = (gy * roll + gz * yaw) * (gz >= 0 ? 1.0f : -1.0f);
+		float local = sqrtf(yaw * yaw + roll * roll);
+		float mag = fabsf(world) * GYRO_PLAYER_YAW_RELAX;
+		if (mag > local)
+			mag = local;
+		x = world < 0 ? mag : -mag;
+		break;
+	}
+	default: // LZG_STYLE_YAW
+		x = -yaw;
+		break;
+	}
+	y = -pitch;
+
+	// Speed deadzone + precision speed act on the overall turn speed, like Steam. Below the deadzone
+	// nothing moves; the lost motion is ramped back in by twice the deadzone. Below the precision speed
+	// output shrinks in proportion to speed (small motions get smaller), fully recovered above it.
+	float speed = sqrtf(x * x + y * y);
+	float k = 1.0f;
+	const float dz = g_lzGyroDz / 10.0f, pr = g_lzGyroPrec / 10.0f;
+	if (dz > 0) {
+		if (speed < dz)
+			k = 0;
+		else if (speed < 2 * dz)
+			k = (speed - dz) / dz;
+	}
+	if (pr > 0 && speed < pr)
+		k *= speed / pr;
+	x *= k;
+	y *= k;
+
+	// Vertical/horizontal mixer: stored 0..200, 100 = 0%. Below 100 reduces vertical, above reduces horizontal.
+	const int mix = (int)g_lzGyroMix - 100;
+	if (mix < 0)
+		y *= (100 + mix) / 100.0f;
+	else if (mix > 0)
+		x *= (100 - mix) / 100.0f;
+
+	if (g_lzGyroFlags & LZG_INVERT_X)
+		x = -x;
+	if (g_lzGyroFlags & LZG_INVERT_Y)
+		y = -y;
+	rx = x;
+	ry = y;
 }
 static float stickAxis(int v)
 {
@@ -166,8 +234,15 @@ static float stickAxis(int v)
 struct PadMouse {
 	int px, py; // last touched position
 	bool touching;
+	bool anchored; // a fresh coordinate has arrived since touch-down (see PAD_JUMP_MAX below)
 	float vx, vy; // glide velocity
 };
+// Trackpad jump guards. (1) The touch bit can arrive a report before the coordinates catch up, so the
+// first delta after touch-down would be "lift-off spot -> new spot" -- a jump the glide then multiplies.
+// So after touch-down we wait for the coordinates to change once and take that as the starting point.
+// (2) Any single-report move bigger than PAD_JUMP_MAX (about 1/8 of the pad; a fast real swipe moves a
+// few thousand units per report) is treated as a glitch (e.g. a lift-off sample) and re-anchors instead.
+#define PAD_JUMP_MAX 8000
 enum { PM_RIGHT, PM_LEFT, PM_N };
 static PadMouse g_pm[PM_N][NSLOT];
 static float rmx = 0, rmy = 0;
@@ -203,6 +278,18 @@ void rfLizard(Adafruit_USBD_HID *mdev, Adafruit_USBD_HID *kdev, uint8_t mrid,
 			       outMBtn, consumerBits, mouseSrc, doLpadScroll,
 			       gyroOn[s]);
 		anyGyro |= gyroOn[s];
+		// gravity estimate for player-space gyro (cheap; kept warm even while gyro is off)
+		const PuckInput &gi = g_in[s];
+		if (!g_gravInit[s]) {
+			g_grav[s][0] = gi.ax;
+			g_grav[s][1] = gi.ay;
+			g_grav[s][2] = gi.az;
+			g_gravInit[s] = true;
+		} else {
+			g_grav[s][0] += (gi.ax - g_grav[s][0]) * 0.05f;
+			g_grav[s][1] += (gi.ay - g_grav[s][1]) * 0.05f;
+			g_grav[s][2] += (gi.az - g_grav[s][2]) * 0.05f;
+		}
 	}
 
 	// ---- pads + sticks -> mouse motion ----
@@ -231,9 +318,22 @@ void rfLizard(Adafruit_USBD_HID *mdev, Adafruit_USBD_HID *kdev, uint8_t mrid,
 							       TB_LPADT)) != 0;
 				int x = (p == PM_RIGHT) ? in.rpx : in.lpx;
 				int y = (p == PM_RIGHT) ? in.rpy : in.lpy;
+				if (touch && !pm.touching)
+					pm.anchored = false; // touch-down
 				if (touch && pm.touching) {
-					pm.vx += (x - pm.px);
-					pm.vy += (y - pm.py);
+					int ddx = x - pm.px, ddy = y - pm.py;
+					bool moved = ddx || ddy;
+					bool spike = ddx > PAD_JUMP_MAX ||
+						     ddx < -PAD_JUMP_MAX ||
+						     ddy > PAD_JUMP_MAX ||
+						     ddy < -PAD_JUMP_MAX;
+					if (moved && !pm.anchored)
+						pm.anchored =
+							true; // first fresh sample = start point
+					else if (!spike) {
+						pm.vx += ddx;
+						pm.vy += ddy;
+					}
 				}
 				if (touch) {
 					pm.px = x;
@@ -301,14 +401,16 @@ void rfLizard(Adafruit_USBD_HID *mdev, Adafruit_USBD_HID *kdev, uint8_t mrid,
 			// a stalled or first report must not fling the cursor
 			if (dt > 0.05f)
 				dt = 0;
-			float pxPerDeg =
-				GYRO_MOUSE_PX_PER_DEG * 64.0f / (float)g_mDiv;
+			// pixels per degree = Dots Per 360 / 360 x sensitivity (both from the panel, Steam-style)
+			float pxPerDeg = (g_lzGyroDots * 100.0f / 360.0f) *
+					 (g_lzGyroSens / 10.0f);
 			for (int s = 0; s < NSLOT; s++) {
 				if (!gyroOn[s])
 					continue;
-				const PuckInput &in = g_in[s];
-				mxf -= gyroDps(in.gz) * pxPerDeg * dt; // yaw
-				myf += gyroDps(in.gx) * pxPerDeg * dt; // pitch
+				float rx, ry;
+				gyroMouseRate(s, g_in[s], rx, ry);
+				mxf += rx * pxPerDeg * dt;
+				myf += ry * pxPerDeg * dt;
 			}
 		} else
 			g_gyroLastUs = 0;

@@ -54,6 +54,14 @@ uint8_t g_gyroDampBtns = 0;
 uint8_t g_gyroDampPct = GYRO_DAMP_PCT_DEFAULT;
 uint8_t g_gyroDampHold = GYRO_DAMP_HOLD_DEFAULT;
 
+// Lizard gyro mouse output settings (see config.h LZG_*).
+uint8_t g_lzGyroFlags = LZG_STYLE_YAW;
+uint8_t g_lzGyroDots = 43;
+uint8_t g_lzGyroSens = 10;
+uint8_t g_lzGyroMix = 100;
+uint8_t g_lzGyroDz = 15;
+uint8_t g_lzGyroPrec = 0;
+
 // Live mirrors of the active type (puck modes use the harmless defaults below).
 uint8_t g_abSwap = 0;
 uint8_t g_back[4] = { 5, 6, 7, 8 };
@@ -127,6 +135,9 @@ struct Cfg {
 	uint8_t gyroGate[ET_COUNT];
 	// gyro dampening (g_gyroDamp*); 0xFF (a cfg.bin predating these tail fields) -> compiled defaults
 	uint8_t gyroDampBtns, gyroDampPct, gyroDampHold;
+	// lizard gyro mouse (g_lzGyro*); 0xFF (older cfg.bin) -> compiled defaults
+	uint8_t lzGyroFlags, lzGyroDots, lzGyroSens, lzGyroMix, lzGyroDz,
+		lzGyroPrec;
 }; // rsvd0 = ex-padSmooth, now the one-shot debug-CDC arm
 
 // Shortest cfg.bin we still accept: the layout as of CFG_MAGIC 0xCF, i.e. everything before the appended tail.
@@ -181,6 +192,12 @@ void saveCfg()
 	c.gyroDampBtns = g_gyroDampBtns;
 	c.gyroDampPct = g_gyroDampPct;
 	c.gyroDampHold = g_gyroDampHold;
+	c.lzGyroFlags = g_lzGyroFlags;
+	c.lzGyroDots = g_lzGyroDots;
+	c.lzGyroSens = g_lzGyroSens;
+	c.lzGyroMix = g_lzGyroMix;
+	c.lzGyroDz = g_lzGyroDz;
+	c.lzGyroPrec = g_lzGyroPrec;
 	InternalFS.remove(CFG_FILE);
 	File f(InternalFS);
 	if (f.open(CFG_FILE, FILE_O_WRITE)) {
@@ -266,6 +283,21 @@ void loadCfg()
 				g_gyroDampPct = c.gyroDampPct;
 			if (c.gyroDampHold <= GYRO_DAMP_HOLD_MAX)
 				g_gyroDampHold = c.gyroDampHold;
+			// Lizard gyro mouse: 0xFF (older file) or out-of-range values keep the compiled defaults.
+			if ((c.lzGyroFlags & ~LZG_FLAGS_ALL) == 0 &&
+			    (c.lzGyroFlags & LZG_STYLE_MASK) <=
+				    LZG_STYLE_PLAYER)
+				g_lzGyroFlags = c.lzGyroFlags;
+			if (c.lzGyroDots >= 4 && c.lzGyroDots <= 200)
+				g_lzGyroDots = c.lzGyroDots;
+			if (c.lzGyroSens >= 1 && c.lzGyroSens <= 100)
+				g_lzGyroSens = c.lzGyroSens;
+			if (c.lzGyroMix <= 200)
+				g_lzGyroMix = c.lzGyroMix;
+			if (c.lzGyroDz <= 50)
+				g_lzGyroDz = c.lzGyroDz;
+			if (c.lzGyroPrec <= 100)
+				g_lzGyroPrec = c.lzGyroPrec;
 			// Missing extension bytes alone do not force a config rewrite.
 			if (got < (int)offsetof(struct Cfg, ext))
 				consume = true;
