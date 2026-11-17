@@ -1,4 +1,4 @@
-> [!NOTICE]
+> [!NOTE]
 > Modifications to this fork were done using Claude Opus 5.5, no code was written by Silevence, only tested using an OpenPuck and Steam Controller 2.
 
 ---
