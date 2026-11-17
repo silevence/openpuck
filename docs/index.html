@@ -306,6 +306,19 @@
     </div>
 
     <div class="card">
+      <h2>Gyro dampening</h2>
+      <!-- Firmware >= protocol v24 (fields 92..94, blob p[201..203] = JS p[199..201]). Older firmware hides the
+           block (see #gyroDampBlock in applyBlob). -->
+      <div id="gyroDampBlock">
+        <div class="row"><label>Dampen while pressed</label><span id="gyroDampBtns" style="display:flex;flex-wrap:wrap;gap:4px 14px"></span></div>
+        <div class="row"><label>Gyro strength while dampened</label><input type="range" id="gyroDampPct" min="0" max="100" step="5"><span class="val" id="gyroDampPctV"></span></div>
+        <div class="row"><label>Keep dampening after release</label><input type="range" id="gyroDampHold" min="0" max="50" step="1"><span class="val" id="gyroDampHoldV"></span></div>
+        <p class="note">Lowers gyro sensitivity while the ticked buttons are held, so pulling a trigger or pressing a button doesn't jolt your aim. 0% freezes gyro completely. The release hold keeps it lowered for a moment after you let go. Applies in every mode except Steam mode, where Steam's own gyro dampening setting is used. Nothing ticked = off.</p>
+      </div>
+      <p id="gyroDampOld" class="note hide">This puck's firmware predates gyro dampening — update it to configure it.</p>
+    </div>
+
+    <div class="card">
       <h2>Switch Pro motion</h2>
       <!-- Gyro mapping (firmware >= v19). Older firmware always uses the corrected mapping and has no field
            to set -> the whole block hides (see #swGyroMapBlock in applyBlob). -->
@@ -777,6 +790,23 @@ for(const sel of document.querySelectorAll("select.chord")){
 for(const sel of document.querySelectorAll("select.chordD")){
   MODE_NAMES.forEach((n,i)=>{
     const o=document.createElement("option"); o.value=i; o.textContent=n; sel.appendChild(o); });
+}
+// Gyro dampening button groups: [label, GYRO_DAMP_* bit] (config.h). The bits ARE the wire value of field 92.
+const GYRO_DAMP_GROUPS=[["Triggers",0x01],["Bumpers",0x02],["A/B/X/Y",0x04],["Back buttons",0x08],["Stick clicks",0x10],["D-pad",0x20],["Trackpad clicks",0x40]];
+let gyroDampBtnsVal=0;
+{ const host=document.getElementById("gyroDampBtns");
+  for(const [lbl,bit] of GYRO_DAMP_GROUPS){
+    const w=document.createElement("label"); w.style.cssText="display:inline-flex;align-items:center;gap:4px;font-weight:normal";
+    const cb=document.createElement("input"); cb.type="checkbox"; cb.dataset.bit=bit;
+    cb.addEventListener("change",()=>{ gyroDampBtnsVal = cb.checked ? (gyroDampBtnsVal|bit) : (gyroDampBtnsVal&~bit); setField(92, gyroDampBtnsVal); });
+    w.appendChild(cb); w.appendChild(document.createTextNode(lbl)); host.appendChild(w);
+  }
+  const pct=document.getElementById("gyroDampPct"), pctV=document.getElementById("gyroDampPctV");
+  pct.addEventListener("input",()=>{ pctV.textContent=pct.value+"%"; });
+  pct.addEventListener("change",()=>setField(93, +pct.value));
+  const hold=document.getElementById("gyroDampHold"), holdV=document.getElementById("gyroDampHoldV");
+  hold.addEventListener("input",()=>{ holdV.textContent=(hold.value*10)+" ms"; });
+  hold.addEventListener("change",()=>setField(94, +hold.value));
 }
 { const sel=document.getElementById("swGyroMap");
   for(const [lbl,v] of [["Corrected (default)",0],["Legacy (untrimmed)",1]]){
@@ -1601,6 +1631,18 @@ function applyBlob(p){
     const ax=s16(54),ay=s16(56),az=s16(58);
     const amag=Math.round(Math.sqrt(ax*ax+ay*ay+az*az));
     $("#stImu").textContent = `a=(${ax}, ${ay}, ${az})  |a|=${amag}`;
+  }
+  { // gyro dampening (protocol v24): firmware p[201..203] = JS p[199..201]
+    const cap=(p[0]>=24 && p.length>201);
+    $("#gyroDampBlock").classList.toggle("hide", !cap);
+    $("#gyroDampOld").classList.toggle("hide", cap);
+    if(cap){
+      gyroDampBtnsVal=p[199];
+      for(const cb of document.querySelectorAll("#gyroDampBtns input")) if(document.activeElement!==cb) cb.checked=!!(gyroDampBtnsVal & +cb.dataset.bit);
+      const pct=$("#gyroDampPct"), hold=$("#gyroDampHold");
+      if(document.activeElement!==pct){ pct.value=p[200]; $("#gyroDampPctV").textContent=p[200]+"%"; }
+      if(document.activeElement!==hold){ hold.value=p[201]; $("#gyroDampHoldV").textContent=(p[201]*10)+" ms"; }
+    }
   }
   { const sel=$("#swGyroMap");
     $("#swGyroMapBlock").classList.toggle("hide", !gyroMapCap);
