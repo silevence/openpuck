@@ -8,10 +8,36 @@
 // Evaluate the binding table for ONE controller's button word, merging its keyboard/mouse-button/
 // consumer outputs into the shared accumulators. Pulled out of rfLizard so every bonded controller can
 // feed the same outputs. mouseSrc/doLpadScroll are map-level (set if such a binding exists at all).
+// true if a gyro MOUSE_AXIS binding's activation condition (LZ_GYRO_*) is met for this button word.
+// `buttons` is lizardButtons() output, so the virtual stick-deflection bits are available too.
+static bool lizardGyroActive(const LizardBinding &b, uint64_t buttons)
+{
+	const bool l = (buttons & TB_LGRIP) != 0, r = (buttons & TB_RGRIP) != 0;
+	switch (b.outData[1]) {
+	case LZ_GYRO_RPAD:
+		return (buttons & TB_RPADT) != 0;
+	case LZ_GYRO_LSTICK:
+		return (buttons & (LZ_BTN_LSTICK_RT | LZ_BTN_LSTICK_LF |
+				   LZ_BTN_LSTICK_DN | LZ_BTN_LSTICK_UP)) != 0;
+	case LZ_GYRO_BTN:
+		return b.holdMask && (buttons & b.holdMask) == b.holdMask;
+	case LZ_GYRO_GRIP_EITHER:
+		return l || r;
+	case LZ_GYRO_GRIP_BOTH:
+		return l && r;
+	case LZ_GYRO_GRIP_LEFT:
+		return l;
+	case LZ_GYRO_GRIP_RIGHT:
+		return r;
+	default: // LZ_GYRO_ALWAYS
+		return true;
+	}
+}
+
 static void lizardEvalSlot(uint64_t buttons, uint8_t &outMod,
 			   uint8_t outKeys[6], uint8_t &nKeys, uint8_t &outMBtn,
 			   uint8_t &consumerBits, uint8_t &mouseSrc,
-			   bool &doLpadScroll)
+			   bool &doLpadScroll, bool &gyroOn)
 {
 	// kbdConsumed (per controller): trig bits claimed by a hold-modifier binding so simpler
 	// single-button bindings sharing those bits are suppressed for THIS controller.
@@ -22,7 +48,12 @@ static void lizardEvalSlot(uint64_t buttons, uint8_t &outMod,
 			continue;
 
 		if (b.outType == LZ_OUT_MOUSE_AXIS) {
-			// bit per LZ_MSRC_* source; gyro is not driven here
+			// bit per LZ_MSRC_* source; the gyro source is gated per controller by its activation condition
+			if (b.outData[0] == LZ_MSRC_GYRO) {
+				if (lizardGyroActive(b, buttons))
+					gyroOn = true;
+				continue;
+			}
 			if (b.outData[0] < 8)
 				mouseSrc |= (uint8_t)(1u << b.outData[0]);
 			continue;
@@ -105,6 +136,20 @@ static uint64_t lizardButtons(const PuckInput &in)
 // Stick deflection -> -1..1 with a deadzone and a squared response.
 #define STICK_MOUSE_DEADZONE 3500
 #define STICK_MOUSE_PX_PER_S 1100.0f
+// Gyro mouse. Raw gyro is +-2000 deg/s over int16 (mode_sinput.cpp SIN_GYRO_DPS_RANGE) = 16.4 counts per deg/s.
+// Axes follow the SC2 frame documented in mode_sinput.cpp: gz = yaw about the up axis, -gx = pitch.
+// Rates under the deadzone are dropped so sensor bias doesn't creep the cursor while the controller is still.
+#define GYRO_COUNTS_PER_DPS 16.4f
+#define GYRO_MOUSE_DEADZONE_DPS 1.5f
+#define GYRO_MOUSE_PX_PER_DEG \
+	12.0f // at the default g_mDiv (64); scales with the mouse sensitivity setting
+static float gyroDps(int16_t v)
+{
+	float d = (float)v / GYRO_COUNTS_PER_DPS;
+	if (d > -GYRO_MOUSE_DEADZONE_DPS && d < GYRO_MOUSE_DEADZONE_DPS)
+		return 0;
+	return d;
+}
 static float stickAxis(int v)
 {
 	int a = v < 0 ? -v : v;
@@ -130,6 +175,7 @@ static int ply[NSLOT] = { 0 };
 static bool plt[NSLOT] = { false };
 static float sacc = 0;
 static uint32_t g_stickLastUs = 0;
+static uint32_t g_gyroLastUs = 0;
 static uint8_t pmbtn = 0; // last-sent mouse buttons
 static uint8_t prevCC = 0; // last-sent consumer bits
 static uint8_t pmod = 0, pkc[6] = {
@@ -147,12 +193,16 @@ void rfLizard(Adafruit_USBD_HID *mdev, Adafruit_USBD_HID *kdev, uint8_t mrid,
 	uint8_t mouseSrc = 0;
 	bool doLpadScroll = false;
 	uint8_t consumerBits = 0;
+	bool gyroOn[NSLOT] = { false, false, false, false };
+	bool anyGyro = false;
 
 	for (int s = 0; s < NSLOT; s++) {
 		if (!g_slot[s].used)
 			continue;
 		lizardEvalSlot(lizardButtons(g_in[s]), outMod, outKeys, nKeys,
-			       outMBtn, consumerBits, mouseSrc, doLpadScroll);
+			       outMBtn, consumerBits, mouseSrc, doLpadScroll,
+			       gyroOn[s]);
+		anyGyro |= gyroOn[s];
 	}
 
 	// ---- pads + sticks -> mouse motion ----
@@ -238,6 +288,30 @@ void rfLizard(Adafruit_USBD_HID *mdev, Adafruit_USBD_HID *kdev, uint8_t mrid,
 			}
 		} else
 			g_stickLastUs = 0;
+
+		// Gyro is a rate control like the sticks: deg/s * elapsed time = degrees turned this pass.
+		// Turning the controller left/right moves the cursor left/right; tilting it up/down moves it up/down.
+		if (anyGyro) {
+			uint32_t nowUs = micros();
+			float dt = g_gyroLastUs ?
+					   (uint32_t)(nowUs - g_gyroLastUs) *
+						   1e-6f :
+					   0;
+			g_gyroLastUs = nowUs;
+			// a stalled or first report must not fling the cursor
+			if (dt > 0.05f)
+				dt = 0;
+			float pxPerDeg =
+				GYRO_MOUSE_PX_PER_DEG * 64.0f / (float)g_mDiv;
+			for (int s = 0; s < NSLOT; s++) {
+				if (!gyroOn[s])
+					continue;
+				const PuckInput &in = g_in[s];
+				mxf -= gyroDps(in.gz) * pxPerDeg * dt; // yaw
+				myf += gyroDps(in.gx) * pxPerDeg * dt; // pitch
+			}
+		} else
+			g_gyroLastUs = 0;
 
 		mxf += rmx;
 		myf += rmy;
@@ -353,6 +427,7 @@ void rfLizardRelease(Adafruit_USBD_HID *mdev, Adafruit_USBD_HID *kdev,
 		plt[s] = false;
 	}
 	g_stickLastUs = 0;
+	g_gyroLastUs = 0;
 	rmx = rmy = sacc = 0;
 	pmbtn = 0;
 	prevCC = 0;

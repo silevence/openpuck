@@ -40,6 +40,11 @@
 #define LZ_GYRO_LSTICK 2u // only when left stick is deflected past threshold
 // only when all bits in LizardBinding::holdMask are held
 #define LZ_GYRO_BTN 3u
+// grip sense: only while the capacitive grips are touched (TB_LGRIP / TB_RGRIP, triton.h)
+#define LZ_GYRO_GRIP_EITHER 4u // either grip touched
+#define LZ_GYRO_GRIP_BOTH 5u // both grips touched
+#define LZ_GYRO_GRIP_LEFT 6u // left grip touched
+#define LZ_GYRO_GRIP_RIGHT 7u // right grip touched
 
 // ---- virtual stick-deflection trigger bits (usable in trigMask / holdMask) ----
 // Low 32 bits preserve the complete native Triton button word. Virtual
