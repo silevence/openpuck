@@ -319,6 +319,23 @@
     </div>
 
     <div class="card">
+      <h2>Lizard gyro mouse</h2>
+      <!-- Firmware >= protocol v25 (fields 102..107, blob p[204..209] = JS p[202..207]). Older firmware hides
+           the block (see #lzGyroBlock in applyBlob). -->
+      <div id="lzGyroBlock">
+        <div class="row"><label>Turn style</label><select id="lzGyroStyle"><option value="0">Yaw (default, like Steam)</option><option value="1">Roll</option><option value="2">Player space (ignores grip tilt)</option></select></div>
+        <div class="row"><label>Invert</label><span style="display:flex;gap:14px"><label style="font-weight:normal"><input type="checkbox" id="lzGyroInvX"> Invert X output</label><label style="font-weight:normal"><input type="checkbox" id="lzGyroInvY"> Invert Y output</label></span></div>
+        <div class="row"><label>Dots per 360°</label><input type="range" id="lzGyroDots" min="4" max="200" step="1"><span class="val" id="lzGyroDotsV"></span></div>
+        <div class="row"><label>Gyro sensitivity</label><input type="range" id="lzGyroSens" min="1" max="100" step="1"><span class="val" id="lzGyroSensV"></span></div>
+        <div class="row"><label>Vertical/horizontal mixer</label><input type="range" id="lzGyroMix" min="0" max="200" step="5"><span class="val" id="lzGyroMixV"></span></div>
+        <div class="row"><label>Speed deadzone</label><input type="range" id="lzGyroDz" min="0" max="50" step="1"><span class="val" id="lzGyroDzV"></span></div>
+        <div class="row"><label>Precision speed</label><input type="range" id="lzGyroPrec" min="0" max="100" step="1"><span class="val" id="lzGyroPrecV"></span></div>
+        <p class="note">For a Lizard "Mouse move → Gyro" binding. Dots per 360° is how many pixels one full turn moves the cursor at 1x sensitivity. Player space turns around the real-world vertical, so holding the controller tilted doesn't slow left/right aim. Mixer: left of 0% lowers vertical, right lowers horizontal. Deadzone ignores slow motion (hand shake); precision speed shrinks small motions. Emulated gamepad modes send raw gyro and the game's own settings apply.</p>
+      </div>
+      <p id="lzGyroOld" class="note hide">This puck's firmware predates these gyro mouse settings — update it to configure them.</p>
+    </div>
+
+    <div class="card">
       <h2>Switch Pro motion</h2>
       <!-- Gyro mapping (firmware >= v19). Older firmware always uses the corrected mapping and has no field
            to set -> the whole block hides (see #swGyroMapBlock in applyBlob). -->
@@ -807,6 +824,18 @@ let gyroDampBtnsVal=0;
   const hold=document.getElementById("gyroDampHold"), holdV=document.getElementById("gyroDampHoldV");
   hold.addEventListener("input",()=>{ holdV.textContent=(hold.value*10)+" ms"; });
   hold.addEventListener("change",()=>setField(94, +hold.value));
+}
+// Lizard gyro mouse (protocol v25). Field 102 packs style (bits 0..1) + invert X (bit 2) + invert Y (bit 3).
+const LZG_FMT={
+  lzGyroDots:v=>(v*100)+" px", lzGyroSens:v=>(v/10).toFixed(1)+"x",
+  lzGyroMix:v=>(v-100)+"%", lzGyroDz:v=>(v/10).toFixed(1)+"°/s", lzGyroPrec:v=>(v/10).toFixed(1)+"°/s" };
+const LZG_FIELD={lzGyroDots:103, lzGyroSens:104, lzGyroMix:105, lzGyroDz:106, lzGyroPrec:107};
+function lzGyroFlags(){ return (+document.getElementById("lzGyroStyle").value) | (document.getElementById("lzGyroInvX").checked?4:0) | (document.getElementById("lzGyroInvY").checked?8:0); }
+for(const id of ["lzGyroStyle","lzGyroInvX","lzGyroInvY"]) document.getElementById(id).addEventListener("change",()=>setField(102, lzGyroFlags()));
+for(const id in LZG_FIELD){
+  const el=document.getElementById(id), lab=document.getElementById(id+"V");
+  el.addEventListener("input",()=>{ lab.textContent=LZG_FMT[id](+el.value); });
+  el.addEventListener("change",()=>setField(LZG_FIELD[id], +el.value));
 }
 { const sel=document.getElementById("swGyroMap");
   for(const [lbl,v] of [["Corrected (default)",0],["Legacy (untrimmed)",1]]){
@@ -1642,6 +1671,20 @@ function applyBlob(p){
       const pct=$("#gyroDampPct"), hold=$("#gyroDampHold");
       if(document.activeElement!==pct){ pct.value=p[200]; $("#gyroDampPctV").textContent=p[200]+"%"; }
       if(document.activeElement!==hold){ hold.value=p[201]; $("#gyroDampHoldV").textContent=(p[201]*10)+" ms"; }
+    }
+  }
+  { // lizard gyro mouse (protocol v25): firmware p[204..209] = JS p[202..207]
+    const cap=(p[0]>=25 && p.length>207);
+    $("#lzGyroBlock").classList.toggle("hide", !cap);
+    $("#lzGyroOld").classList.toggle("hide", cap);
+    if(cap){
+      const fl=p[202];
+      if(document.activeElement!==$("#lzGyroStyle")) $("#lzGyroStyle").value=fl&3;
+      if(document.activeElement!==$("#lzGyroInvX")) $("#lzGyroInvX").checked=!!(fl&4);
+      if(document.activeElement!==$("#lzGyroInvY")) $("#lzGyroInvY").checked=!!(fl&8);
+      ["lzGyroDots","lzGyroSens","lzGyroMix","lzGyroDz","lzGyroPrec"].forEach((id,i)=>{
+        const el=$("#"+id); if(document.activeElement!==el){ el.value=p[203+i]; $("#"+id+"V").textContent=LZG_FMT[id](p[203+i]); }
+      });
     }
   }
   { const sel=$("#swGyroMap");
