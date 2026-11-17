@@ -660,7 +660,7 @@ const LZ_KEYS = [[0,"— none —"]];
 for(let i=0;i<12;i++) LZ_KEYS.push([0x3a+i,"F"+(i+1)]);
 const LZ_MBTNS = [[1,"Left click"],[2,"Right click"],[4,"Middle click"]];
 const LZ_AXIS_SRC = [[0,"Right trackpad"],[3,"Left trackpad"],[1,"Left stick"],[4,"Right stick"],[2,"Gyro"]];
-const LZ_GYRO_ACT = [[0,"Always"],[1,"While right pad touched"],[2,"While left stick deflected"],[3,"While hold-button held"]];
+const LZ_GYRO_ACT = [[0,"Always"],[1,"While right pad touched"],[2,"While left stick deflected"],[3,"While hold-button held"],[4,"While either grip touched"],[5,"While both grips touched"],[6,"While left grip touched"],[7,"While right grip touched"]];
 const LZ_CONSUMER = [[1,"Volume +"],[2,"Volume −"]];
 
 function lzBtnLabel(mask){ const v=Number(mask)||0; const m=LZ_BTNS.find(b=>Number(b[0])===v); return m?m[1]:(v?("0x"+v.toString(16)):""); }
